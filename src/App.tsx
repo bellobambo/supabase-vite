@@ -42,7 +42,7 @@ const App = () => {
           }}
         >
           <button onClick={logout}>Logout</button>
-          <TaskManagement />
+          <TaskManagement session={session} />
         </div>
       ) : (
         <>

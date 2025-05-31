@@ -1,17 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { supabase } from "../supabase-client";
+import type { Session } from "@supabase/supabase-js";
 
 interface Task {
   id: number;
   title: string;
   description: string;
   created_at: string;
+  image_url: string;
 }
 
-export default function TaskManagement() {
+export default function TaskManagement({ session }: { session: Session }) {
   const [newtasks, setNewTasks] = useState({ title: "", description: "" });
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newDescription, setNewDescription] = useState("");
+
+  const [taskImage, setTaskImage] = useState<File | null>(null);
 
   const fetchTasks = async () => {
     const { error, data } = await supabase
@@ -25,22 +29,48 @@ export default function TaskManagement() {
     }
 
     setTasks(data);
+    console.log("fetched data", data);
   };
 
-  useEffect(() => {
-    fetchTasks();
-    console.log(tasks);
-  }, []);
+  const uploadImage = async (file: File): Promise<string | null> => {
+    const filePath = `${file.name}-${Date.now()}`;
+    const { error } = await supabase.storage
+      .from("tasks-images")
+      .upload(filePath, file);
+
+    if (error) {
+      console.log("Error Uploading Image", error.message);
+    }
+
+    const { data } = await supabase.storage
+      .from("tasks-images")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
 
-    const { error } = await supabase.from("tasks").insert(newtasks).single();
+    let imageUrl: string | null = null;
+    if (taskImage) {
+      imageUrl = await uploadImage(taskImage);
+    }
+
+    // const { error, data } = await supabase
+    const { error } = await supabase
+      .from("tasks")
+      .insert({ ...newtasks, email: session.user.email, image_url: imageUrl })
+      .select()
+      .single();
 
     if (error) {
       console.error("error adding task", error.message);
       return;
     }
+
+    // setTasks((prev) => [...prev, data]);
+
     setNewTasks({ title: "", description: "" });
   };
 
@@ -64,6 +94,35 @@ export default function TaskManagement() {
       return;
     }
   };
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setTaskImage(e.target.files[0]);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+    console.log(tasks);
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase.channel("tasks-channel");
+    channel
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "tasks",
+        },
+        (payload) => {
+          const newTask = payload.new as Task;
+          setTasks((prev) => [...prev, newTask]);
+        }
+      )
+      .subscribe((status) => console.log("Subscription status", status));
+  }, []);
 
   return (
     <div
@@ -114,6 +173,8 @@ export default function TaskManagement() {
               }}
               placeholder="Enter task description"
             ></textarea>
+
+            <input type="file" accept="images/*" onChange={handleFileChange} />
             <button
               type="submit"
               style={{
@@ -165,6 +226,7 @@ export default function TaskManagement() {
                   <p style={{ margin: 0, color: "#ccc", fontSize: "14px" }}>
                     {task.description}
                   </p>
+                  <img src={task.image_url} alt="" style={{ height: "4rem" }} />
                 </div>
                 <div style={{ display: "flex", gap: "8px", marginTop: 8 }}>
                   <textarea
